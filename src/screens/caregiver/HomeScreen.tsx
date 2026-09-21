@@ -1,21 +1,12 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/RootNavigator';
-
-const MOCK_RESIDENTS = [
-  { id: '1', name: 'Martha Bauer', room: '2A', stage: 'In facility care', lastNote: '2h ago' },
-  { id: '2', name: 'Hans Schmidt', room: '3B', stage: 'Supported by family', lastNote: '5h ago' },
-  { id: '3', name: 'Elsa Keller', room: '1C', stage: 'In facility care', lastNote: 'Yesterday' },
-];
-
-const INITIAL_ESCALATIONS = [
-  { id: '1', resident: 'Martha Bauer', room: '2A', reason: 'Requested pain medication review', priority: 'high' },
-  { id: '2', resident: 'Hans Schmidt', room: '3B', reason: 'Missed afternoon physiotherapy', priority: 'medium' },
-];
+import { supabase } from '../../lib/supabase';
+import type { Resident, Escalation } from '../../types/database';
 
 function Badge({ label, variant }: { label: string; variant: 'high' | 'medium' | 'low' }) {
   const colors = {
@@ -23,7 +14,7 @@ function Badge({ label, variant }: { label: string; variant: 'high' | 'medium' |
     medium: { bg: '#fef3c7', text: '#92400e', dot: '#f59e0b' },
     low: { bg: '#f1f5f9', text: '#475569', dot: '#94a3b8' },
   };
-  const color = colors[variant];
+  const color = colors[variant] || colors.low;
   return (
     <View style={[{ backgroundColor: color.bg, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 6 }]}>
       <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color.dot }} />
@@ -36,12 +27,45 @@ export default function CaregiverHomeScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   
-  // Make escalations interactive
-  const [escalations, setEscalations] = useState(INITIAL_ESCALATIONS);
+  const [residents, setResidents] = useState<Resident[]>([]);
+  const [escalations, setEscalations] = useState<Escalation[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const handleResolve = (id: string) => {
-    setEscalations(prev => prev.filter(e => e.id !== id));
+  const fetchData = async () => {
+    try {
+      const [residentsRes, escalationsRes] = await Promise.all([
+        supabase.from('residents').select('*').limit(3),
+        supabase.from('escalations').select('*, residents(first_name, last_name, room_number)').eq('is_resolved', false).limit(3)
+      ]);
+      
+      if (residentsRes.data) setResidents(residentsRes.data as Resident[]);
+      if (escalationsRes.data) setEscalations(escalationsRes.data as Escalation[]);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleResolve = async (id: string) => {
+    // Optimistic UI update
+    setEscalations(prev => prev.filter(e => e.id !== id));
+    
+    // Save to real database
+    await supabase.from('escalations').update({ is_resolved: true }).eq('id', id);
+  };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { alignItems: 'center', justifyContent: 'center' }]}>
+        <ActivityIndicator size="large" color="#7c3aed" />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -103,22 +127,29 @@ export default function CaregiverHomeScreen() {
               <Text style={{ fontSize: 14, color: '#64748b', marginTop: 4 }}>No open escalations.</Text>
             </View>
           ) : (
-            escalations.map(esc => (
-              <View key={esc.id} style={styles.escalationCard}>
-                <View style={styles.escHeader}>
-                  <View style={styles.escResidentInfo}>
-                    <Text style={styles.escResidentName}>{esc.resident}</Text>
-                    <Text style={styles.escRoom}>Room {esc.room}</Text>
+            escalations.map(esc => {
+              const residentName = esc.residents ? `${esc.residents.first_name} ${esc.residents.last_name}` : 'Unknown';
+              // Default to high priority for now, could be dynamic based on reason
+              const priority = 'high';
+              
+              return (
+                <View key={esc.id} style={styles.escalationCard}>
+                  <View style={styles.escHeader}>
+                    <View style={styles.escResidentInfo}>
+                      <Text style={styles.escResidentName}>{residentName}</Text>
+                      {/* Note: we'd need room_number on the nested query to show it properly if we want, or fall back */}
+                      <Text style={styles.escRoom}>Needs attention</Text> 
+                    </View>
+                    <Badge label={priority} variant={priority as any} />
                   </View>
-                  <Badge label={esc.priority} variant={esc.priority as any} />
+                  <Text style={styles.escReason}>{esc.reason}</Text>
+                  <TouchableOpacity style={styles.resolveBtn} onPress={() => handleResolve(esc.id)}>
+                    <Feather name="check" size={16} color="#0f172a" />
+                    <Text style={styles.resolveBtnText}>Mark Resolved</Text>
+                  </TouchableOpacity>
                 </View>
-                <Text style={styles.escReason}>{esc.reason}</Text>
-                <TouchableOpacity style={styles.resolveBtn} onPress={() => handleResolve(esc.id)}>
-                  <Feather name="check" size={16} color="#0f172a" />
-                  <Text style={styles.resolveBtnText}>Mark Resolved</Text>
-                </TouchableOpacity>
-              </View>
-            ))
+              );
+            })
           )}
         </View>
 
@@ -129,29 +160,37 @@ export default function CaregiverHomeScreen() {
           </View>
           
           <View style={styles.rosterContainer}>
-            {MOCK_RESIDENTS.map((res, index) => (
-              <TouchableOpacity 
-                key={res.id} 
-                style={[
-                  styles.residentRow, 
-                  index === MOCK_RESIDENTS.length - 1 && { borderBottomWidth: 0 }
-                ]}
-              >
-                <View style={styles.residentAvatar}>
-                  <Text style={styles.residentInitials}>
-                    {res.name.split(' ').map(n => n[0]).join('')}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.residentName}>{res.name}</Text>
-                  <Text style={styles.residentMeta}>Room {res.room} • {res.stage}</Text>
-                </View>
-                <View style={styles.residentRight}>
-                  <Text style={styles.residentTime}>{res.lastNote}</Text>
-                  <Feather name="chevron-right" size={16} color="#cbd5e1" />
-                </View>
-              </TouchableOpacity>
-            ))}
+            {residents.length === 0 ? (
+              <View style={{ padding: 24, alignItems: 'center' }}>
+                <Text style={{ color: '#94a3b8' }}>No residents assigned.</Text>
+              </View>
+            ) : (
+              residents.map((res, index) => {
+                const fullName = `${res.first_name} ${res.last_name}`;
+                const initials = `${res.first_name.charAt(0)}${res.last_name.charAt(0)}`;
+                return (
+                  <TouchableOpacity 
+                    key={res.id} 
+                    style={[
+                      styles.residentRow, 
+                      index === residents.length - 1 && { borderBottomWidth: 0 }
+                    ]}
+                  >
+                    <View style={styles.residentAvatar}>
+                      <Text style={styles.residentInitials}>{initials}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.residentName}>{fullName}</Text>
+                      <Text style={styles.residentMeta}>Room {res.room_number || 'TBD'} • {res.care_stage || 'Standard Care'}</Text>
+                    </View>
+                    <View style={styles.residentRight}>
+                      <Text style={styles.residentTime}>View</Text>
+                      <Feather name="chevron-right" size={16} color="#cbd5e1" />
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
           </View>
         </View>
       </ScrollView>

@@ -2,6 +2,7 @@
   "expo": {
     "name": "aethon-android",
     "slug": "aethon-android",
+    "scheme": "aethon",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -20,6 +21,9 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-web-browser"
+    ]
   }
 }

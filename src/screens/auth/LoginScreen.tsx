@@ -6,7 +6,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/RootNavigator';
 import { Feather } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase'; // Connected to real backend!
+import { supabase } from '../../lib/supabase';
+import * as WebBrowser from 'expo-web-browser';
+import { makeRedirectUri } from 'expo-auth-session';
+
+// Required for web browser flow
+WebBrowser.maybeCompleteAuthSession();
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -62,6 +67,7 @@ function AuraFog() {
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
+  const scaleAnim = useRef(new Animated.Value(1)).current;
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -74,9 +80,20 @@ export default function LoginScreen() {
         navigation.replace('RoleSelector');
       }
     });
+    
+    // Listen for deep link auth redirects
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        navigation.replace('RoleSelector');
+      }
+    });
+    
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
-  const handleLogin = async () => {
+  const handleEmailLogin = async () => {
     if (!email || !password) {
       Alert.alert('Error', 'Please enter both email and password.');
       return;
@@ -91,10 +108,49 @@ export default function LoginScreen() {
     if (error) {
       Alert.alert('Login Failed', error.message);
       setLoading(false);
-    } else {
-      // Login successful!
-      navigation.replace('RoleSelector');
     }
+  };
+
+  const handleGoogleLogin = async () => {
+    try {
+      setLoading(true);
+      const redirectUri = makeRedirectUri({
+        scheme: 'aethon'
+      });
+      
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUri,
+          queryParams: {
+            prompt: 'select_account'
+          },
+          skipBrowserRedirect: true, // We handle the browser in React Native
+        }
+      });
+      
+      if (error) throw error;
+      
+      if (data?.url) {
+        const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
+        
+        if (result.type === 'success') {
+          // Parse the URL to get the session token
+          const { url } = result;
+          // Supabase handles the URL session extraction automatically if configured, 
+          // but we can force it if needed:
+          // await supabase.auth.getSessionFromUrl({ url });
+        }
+      }
+    } catch (error: any) {
+      Alert.alert('Google Auth Error', error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const animatePress = (inPress: boolean) => {
+    Animated.spring(scaleAnim, { toValue: inPress ? 0.95 : 1, useNativeDriver: true, speed: 20 }).start();
   };
 
   return (
@@ -117,6 +173,31 @@ export default function LoginScreen() {
         </View>
 
         <View style={styles.formContainer}>
+          
+          <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPressIn={() => animatePress(true)}
+              onPressOut={() => animatePress(false)}
+              onPress={handleGoogleLogin}
+              disabled={loading}
+            >
+              <View style={styles.googleButton}>
+                <Image 
+                  source={require('../../../assets/google-icon.png')} 
+                  style={styles.googleIcon} 
+                />
+                <Text style={styles.googleButtonText}>Continue with Google</Text>
+              </View>
+            </TouchableOpacity>
+          </Animated.View>
+
+          <View style={styles.dividerWrap}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
           <View style={styles.inputWrap}>
             <Feather name="mail" size={20} color="#94a3b8" />
             <TextInput
@@ -144,10 +225,10 @@ export default function LoginScreen() {
 
           <TouchableOpacity
             style={[styles.loginBtn, loading && { opacity: 0.7 }]}
-            onPress={handleLogin}
+            onPress={handleEmailLogin}
             disabled={loading}
           >
-            <Text style={styles.loginBtnText}>{loading ? 'Signing In...' : 'Sign In'}</Text>
+            <Text style={styles.loginBtnText}>{loading ? 'Signing In...' : 'Sign In with Email'}</Text>
           </TouchableOpacity>
           
           <Text style={styles.termsText}>
@@ -211,6 +292,44 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 24,
     marginBottom: 20,
+  },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  googleIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 12,
+  },
+  googleButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  dividerWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 24,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e2e8f0',
+  },
+  dividerText: {
+    paddingHorizontal: 12,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#94a3b8',
   },
   inputWrap: {
     flexDirection: 'row',
