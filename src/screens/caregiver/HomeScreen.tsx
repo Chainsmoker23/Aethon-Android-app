@@ -92,7 +92,7 @@ export default function CaregiverHomeScreen() {
         <View style={styles.header}>
           <View style={styles.headerTextWrap}>
             <Text style={styles.dateText}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase()}</Text>
-            <Text style={styles.greetingText}>{profile?.full_name ? profile.full_name.split(' ')[0] + 's Shift : 'My Shift'}</Text>
+            <Text style={styles.greetingText}>{profile?.full_name ? `${profile.full_name.split(' ')[0]}'s Shift` : 'My Shift'}</Text>
             <Text style={styles.subtitle}>{residents.length} residents assigned • {escalations.length} alerts</Text>
           </View>
           <TouchableOpacity style={styles.profileButton}>
