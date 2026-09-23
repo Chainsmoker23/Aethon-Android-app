@@ -8,16 +8,15 @@ import type { RootStackParamList } from '../../navigation/RootNavigator';
 import { Feather } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import * as WebBrowser from 'expo-web-browser';
-import { makeRedirectUri } from 'expo-auth-session';
+import * as Linking from 'expo-linking';
 
-// Required for web browser flow
 WebBrowser.maybeCompleteAuthSession();
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 const GEMINI_PALETTES = [
-  ['rgba(167,243,252,0.8)', 'rgba(191,219,254,0.9)'], // Gemini Cyan/Blue
-  ['rgba(249,168,212,0.8)', 'rgba(216,180,254,0.9)'], // Soft Pink/Purple
+  ['rgba(167,243,252,0.8)', 'rgba(191,219,254,0.9)'],
+  ['rgba(249,168,212,0.8)', 'rgba(216,180,254,0.9)'],
 ];
 
 function AuraFog() {
@@ -64,6 +63,25 @@ function AuraFog() {
   );
 }
 
+// Helper: extract tokens from URL hash fragment
+function extractTokensFromUrl(url: string) {
+  // Supabase implicit flow returns tokens in the hash fragment: #access_token=xxx&refresh_token=xxx
+  const hashIndex = url.indexOf('#');
+  if (hashIndex === -1) return null;
+  
+  const hash = url.substring(hashIndex + 1);
+  const params: Record<string, string> = {};
+  hash.split('&').forEach(pair => {
+    const [key, value] = pair.split('=');
+    if (key && value) params[decodeURIComponent(key)] = decodeURIComponent(value);
+  });
+  
+  if (params.access_token && params.refresh_token) {
+    return { access_token: params.access_token, refresh_token: params.refresh_token };
+  }
+  return null;
+}
+
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
@@ -73,7 +91,6 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Auto-check if already logged in
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
@@ -81,7 +98,6 @@ export default function LoginScreen() {
       }
     });
     
-    // Listen for deep link auth redirects
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         navigation.replace('RoleSelector');
@@ -100,10 +116,7 @@ export default function LoginScreen() {
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
       Alert.alert('Login Failed', error.message);
@@ -114,46 +127,44 @@ export default function LoginScreen() {
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
-      const redirectUri = makeRedirectUri({
-        scheme: 'aethon',
-        path: 'auth/callback'
-      });
       
-      console.log('--------------------------------------------------');
-      console.log('REDIRECT URI (COPY EXACTLY):');
-      console.log(redirectUri);
-      console.log('--------------------------------------------------');
+      // Use expo-linking to create the redirect URL (works in Expo Go)
+      const redirectUri = Linking.createURL('auth/callback');
+      console.log('Redirect URI:', redirectUri);
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: redirectUri,
-          queryParams: {
-            prompt: 'select_account'
-          },
-          skipBrowserRedirect: true, // We handle the browser in React Native
+          skipBrowserRedirect: true,
+          queryParams: { prompt: 'select_account' },
         }
       });
       
       if (error) throw error;
       
       if (data?.url) {
+        // Open browser and wait for it to redirect back
         const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
         
         if (result.type === 'success' && result.url) {
-          // Manually extract session since detectSessionInUrl is false in React Native
-          const { data: sessionData, error: sessionError } = await supabase.auth.getSessionFromUrl({
-            url: result.url
-          });
+          // Extract tokens from the URL hash fragment
+          const tokens = extractTokensFromUrl(result.url);
           
-          if (sessionError) throw sessionError;
-          if (sessionData.session) {
-             navigation.replace('RoleSelector');
+          if (tokens) {
+            // Set the session manually in Supabase
+            const { error: sessionError } = await supabase.auth.setSession({
+              access_token: tokens.access_token,
+              refresh_token: tokens.refresh_token,
+            });
+            
+            if (sessionError) throw sessionError;
+            // onAuthStateChange will handle navigation
           }
         }
       }
     } catch (error: any) {
-      Alert.alert('Google Auth Error', error.message);
+      Alert.alert('Google Login Error', error.message);
     } finally {
       setLoading(false);
     }

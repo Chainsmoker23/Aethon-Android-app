@@ -8,6 +8,7 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     storage: AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false, // Important for React Native
+    detectSessionInUrl: false,
+    flowType: 'implicit',  // Critical: avoid PKCE which needs server-side callback
   },
 });
