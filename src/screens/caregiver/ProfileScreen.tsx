@@ -43,8 +43,30 @@ export default function ProfileScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { clearPins } = useShift();
 
+  const [profile, setProfile] = useState<any>(null);
   const [biometrics, setBiometrics] = useState(true);
   const [notifications, setNotifications] = useState(true);
+
+  useEffect(() => {
+    fetchProfile();
+  }, []);
+
+  const fetchProfile = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+        
+      if (data) setProfile(data);
+    } catch (error) {
+      console.error('Error fetching profile', error);
+    }
+  };
 
   const handleLogout = async () => {
     try {
@@ -65,12 +87,16 @@ export default function ProfileScreen() {
         
         {/* Profile Header */}
         <View style={styles.profileHeader}>
-          <Image 
-            source={{ uri: 'https://i.pravatar.cc/150?img=32' }}
-            style={styles.avatar}
-          />
-          <Text style={styles.name}>Nurse Sofia</Text>
-          <Text style={styles.role}>Senior Caregiver • Aethon Zurich</Text>
+          <View style={styles.avatarFallback}>
+            <Text style={styles.avatarFallbackText}>
+              {profile?.full_name ? profile.full_name.charAt(0).toUpperCase() : 'C'}
+            </Text>
+          </View>
+          <Text style={styles.name}>{profile?.full_name || 'Loading...'}</Text>
+          <Text style={styles.role}>
+            {profile?.role ? profile.role.toUpperCase() : 'CAREGIVER'} 
+            {profile?.nurse_id ? ` • ID: ${profile.nurse_id}` : ''}
+          </Text>
           <View style={styles.badgeWrap}>
             <View style={styles.statusDot} />
             <Text style={styles.statusText}>On Shift</Text>
@@ -141,7 +167,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 40,
   },
-  avatar: {
+  avatarFallback: { backgroundColor: "#f5f3ff", justifyContent: "center",
+  avatarFallbackText: { fontSize: 32, fontWeight: '800', color: '#7c3aed' },
     width: 100,
     height: 100,
     borderRadius: 50,

@@ -29,16 +29,26 @@ export default function CaregiverHomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { pinnedResidentIds } = useShift();
   
+  const [profile, setProfile] = useState<any>(null);
   const [residents, setResidents] = useState<Resident[]>([]);
   const [escalations, setEscalations] = useState<Escalation[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchData = async () => {
     try {
+      // 1. Fetch Profile
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profileData } = await supabase.from('user_profiles').select('full_name, nurse_id').eq('id', user.id).single();
+        if (profileData) setProfile(profileData);
+      }
+
+      // 2. Fetch Residents
       let residentsQuery = supabase.from('residents').select('*');
       if (pinnedResidentIds.length > 0) residentsQuery = residentsQuery.in('id', pinnedResidentIds);
       else residentsQuery = residentsQuery.limit(3);
 
+      // 3. Fetch Escalations
       let escalationsQuery = supabase.from('escalations').select('*, residents(first_name, last_name, room_number)').eq('is_resolved', false);
       if (pinnedResidentIds.length > 0) escalationsQuery = escalationsQuery.in('resident_id', pinnedResidentIds);
       else escalationsQuery = escalationsQuery.limit(3);
@@ -81,9 +91,9 @@ export default function CaregiverHomeScreen() {
         {/* Header Section */}
         <View style={styles.header}>
           <View style={styles.headerTextWrap}>
-            <Text style={styles.dateText}>THURSDAY, SEP 21</Text>
-            <Text style={styles.greetingText}>My Shift</Text>
-            <Text style={styles.subtitle}>3 residents assigned • {escalations.length} alerts</Text>
+            <Text style={styles.dateText}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }).toUpperCase()}</Text>
+            <Text style={styles.greetingText}>{profile?.full_name ? profile.full_name.split(' ')[0] + 's Shift : 'My Shift'}</Text>
+            <Text style={styles.subtitle}>{residents.length} residents assigned • {escalations.length} alerts</Text>
           </View>
           <TouchableOpacity style={styles.profileButton}>
             <Image 
