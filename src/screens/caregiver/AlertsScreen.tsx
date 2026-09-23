@@ -1,54 +1,89 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-
-const ALERTS = [
-  { id: '1', resident: 'Martha Bauer', room: '2A', type: 'Medication', message: 'Pain medication due in 15 mins.', time: 'Just now' },
-  { id: '2', resident: 'Hans Schmidt', room: '3B', type: 'System', message: 'Bed sensor disconnected.', time: '12 mins ago' },
-  { id: '3', resident: 'Elsa Keller', room: '1C', type: 'Family', message: 'Family member left a new message.', time: '1h ago' },
-];
+import { supabase } from '../../lib/supabase';
+import { useShift } from '../../context/ShiftContext';
 
 export default function AlertsScreen() {
   const insets = useSafeAreaInsets();
-  const [alerts, setAlerts] = useState(ALERTS);
+  const { pinnedResidentIds } = useShift();
+  
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const dismissAlert = (id: string) => {
+  const fetchAlerts = async () => {
+    try {
+      let query = supabase
+        .from('escalations')
+        .select('*, residents(first_name, last_name, room_number)')
+        .eq('is_resolved', false)
+        .order('created_at', { ascending: false });
+
+      if (pinnedResidentIds.length > 0) {
+        query = query.in('resident_id', pinnedResidentIds);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setAlerts(data || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAlerts();
+  }, [pinnedResidentIds]);
+
+  const dismissAlert = async (id: string) => {
     setAlerts(prev => prev.filter(a => a.id !== id));
+    await supabase.from('escalations').update({ is_resolved: true }).eq('id', id);
   };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Active Alerts</Text>
-        <TouchableOpacity>
-          <Text style={styles.headerAction}>Clear All</Text>
-        </TouchableOpacity>
       </View>
       
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {alerts.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Feather name="bell-off" size={48} color="#cbd5e1" style={{ marginBottom: 16 }} />
-            <Text style={styles.emptyTitle}>No active alerts</Text>
-            <Text style={styles.emptyDesc}>You are all caught up for this shift.</Text>
-          </View>
-        ) : (
-          alerts.map(alert => (
-            <View key={alert.id} style={styles.alertCard}>
-              <View style={styles.alertHeader}>
-                <Text style={styles.alertType}>{alert.type}</Text>
-                <Text style={styles.alertTime}>{alert.time}</Text>
-              </View>
-              <Text style={styles.alertResident}>{alert.resident} • Room {alert.room}</Text>
-              <Text style={styles.alertMessage}>{alert.message}</Text>
-              <TouchableOpacity style={styles.dismissBtn} onPress={() => dismissAlert(alert.id)}>
-                <Text style={styles.dismissBtnText}>Dismiss</Text>
-              </TouchableOpacity>
+      {loading ? (
+        <ActivityIndicator color="#0f172a" style={{ marginTop: 40 }} />
+      ) : (
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {alerts.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Feather name="bell-off" size={48} color="#cbd5e1" style={{ marginBottom: 16 }} />
+              <Text style={styles.emptyTitle}>No active alerts</Text>
+              <Text style={styles.emptyDesc}>You are all caught up for this shift.</Text>
             </View>
-          ))
-        )}
-      </ScrollView>
+          ) : (
+            alerts.map(alert => (
+              <View key={alert.id} style={styles.alertCard}>
+                <View style={styles.alertHeader}>
+                  <Text style={styles.alertType}>{alert.severity} Priority</Text>
+                  <Text style={styles.alertTime}>
+                    {new Date(alert.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </Text>
+                </View>
+                
+                <Text style={styles.alertResident}>
+                  {alert.residents?.first_name} {alert.residents?.last_name} 
+                  {alert.residents?.room_number ? ` (Rm ${alert.residents.room_number})` : ''}
+                </Text>
+                <Text style={styles.alertMessage}>{alert.description}</Text>
+                
+                <TouchableOpacity style={styles.dismissBtn} onPress={() => dismissAlert(alert.id)}>
+                  <Feather name="check" size={16} color="#0f172a" />
+                  <Text style={styles.dismissBtnText}>Mark Resolved</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -60,34 +95,46 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 24,
     paddingTop: 16,
-    paddingBottom: 24,
+    paddingBottom: 16,
   },
   headerTitle: {
     fontSize: 28,
     fontWeight: '800',
     color: '#0f172a',
-    letterSpacing: -0.5,
-  },
-  headerAction: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#7c3aed',
   },
   scrollContent: {
     paddingHorizontal: 24,
     paddingBottom: 100,
   },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 80,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  emptyDesc: {
+    fontSize: 15,
+    color: '#64748b',
+    textAlign: 'center',
+  },
   alertCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
     padding: 16,
+    borderRadius: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#fee2e2',
+    borderLeftWidth: 4,
+    borderLeftColor: '#ef4444',
   },
   alertHeader: {
     flexDirection: 'row',
@@ -97,8 +144,9 @@ const styles = StyleSheet.create({
   alertType: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#dc2626',
+    color: '#ef4444',
     textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   alertTime: {
     fontSize: 12,
@@ -118,31 +166,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   dismissBtn: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#f1f5f9',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  dismissBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  emptyState: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 60,
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 8,
   },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+  dismissBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#0f172a',
-    marginBottom: 8,
-  },
-  emptyDesc: {
-    fontSize: 15,
-    color: '#64748b',
-    textAlign: 'center',
   },
 });

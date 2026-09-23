@@ -1,32 +1,75 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-
-const RESIDENTS = [
-  'Martha Bauer',
-  'Hans Schmidt',
-  'Elsa Keller',
-];
+import { supabase } from '../../lib/supabase';
+import { useShift } from '../../context/ShiftContext';
 
 const MOODS = [
-  { icon: 'smile', label: 'Good', color: '#10b981', bg: '#d1fae5' },
-  { icon: 'meh', label: 'Okay', color: '#f59e0b', bg: '#fef3c7' },
-  { icon: 'frown', label: 'Poor', color: '#ef4444', bg: '#fee2e2' },
+  { icon: 'smile', label: 'Good', color: '#10b981', bg: '#d1fae5', dbValue: 'good' },
+  { icon: 'meh', label: 'Okay', color: '#f59e0b', bg: '#fef3c7', dbValue: 'okay' },
+  { icon: 'frown', label: 'Poor', color: '#ef4444', bg: '#fee2e2', dbValue: 'poor' },
 ];
 
 export default function LogNoteScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
+  const { pinnedResidentIds } = useShift();
   
-  const [selectedResident, setSelectedResident] = useState(RESIDENTS[0]);
-  const [selectedMood, setSelectedMood] = useState(MOODS[0].label);
+  const [residents, setResidents] = useState<any[]>([]);
+  const [loadingResidents, setLoadingResidents] = useState(true);
+  
+  const [selectedResidentId, setSelectedResidentId] = useState<string | null>(null);
+  const [selectedMood, setSelectedMood] = useState(MOODS[0]);
   const [note, setNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSave = () => {
-    // Navigate back to the Caregiver Home (in a real app, this saves to Supabase)
-    navigation.goBack();
+  useEffect(() => {
+    fetchResidents();
+  }, [pinnedResidentIds]);
+
+  const fetchResidents = async () => {
+    try {
+      let query = supabase.from('residents').select('id, first_name, last_name, room_number').order('last_name', { ascending: true });
+      if (pinnedResidentIds.length > 0) {
+        query = query.in('id', pinnedResidentIds);
+      }
+      
+      const { data, error } = await query;
+      if (error) throw error;
+      setResidents(data || []);
+      if (data && data.length > 0) {
+        setSelectedResidentId(data[0].id);
+      }
+    } catch (err) {
+      console.error('Error loading residents', err);
+    } finally {
+      setLoadingResidents(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!selectedResidentId) return Alert.alert('Error', 'Please select a resident.');
+    
+    setSubmitting(true);
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      
+      const { error } = await supabase.from('visit_notes').insert({
+        resident_id: selectedResidentId,
+        facility_id: null,
+        staff_id: userData.user?.id,
+        visit_type: 'Caregiver Log',
+        notes: `[Mood: ${selectedMood.label}] - ${note}`
+      });
+
+      if (error) throw error;
+      navigation.goBack();
+    } catch (err: any) {
+      Alert.alert('Failed to save note', err.message);
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -40,210 +83,120 @@ export default function LogNoteScreen() {
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <Feather name="x" size={24} color="#0f172a" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Log Care Note</Text>
-        <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={!note.trim()}>
-          <Text style={[styles.saveBtnText, !note.trim() && { color: '#94a3b8' }]}>Save</Text>
-        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Log Visit Note</Text>
+        <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
         {/* Resident Selection */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Select Resident</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
-            {RESIDENTS.map(res => (
-              <TouchableOpacity 
-                key={res}
-                style={[
-                  styles.pill,
-                  selectedResident === res ? styles.pillActive : styles.pillInactive
-                ]}
-                onPress={() => setSelectedResident(res)}
-              >
-                <Text style={[
-                  styles.pillText,
-                  selectedResident === res ? styles.pillTextActive : styles.pillTextInactive
-                ]}>{res}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          <Text style={styles.sectionTitle}>Resident</Text>
+          {loadingResidents ? (
+            <ActivityIndicator />
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillContainer}>
+              {residents.map((r, index) => {
+                const isSelected = selectedResidentId === r.id;
+                return (
+                  <TouchableOpacity 
+                    key={r.id} 
+                    style={[styles.pill, isSelected && styles.pillSelected, index === 0 && { marginLeft: 24 }, index === residents.length - 1 && { marginRight: 24 }]}
+                    onPress={() => setSelectedResidentId(r.id)}
+                  >
+                    <Text style={[styles.pillText, isSelected && styles.pillTextSelected]}>
+                      {r.first_name} {r.last_name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
         </View>
 
-        {/* Quick Vitals: Mood */}
+        {/* Mood/Status Selection */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Patient Mood</Text>
-          <View style={styles.moodContainer}>
-            {MOODS.map(mood => {
-              const isActive = selectedMood === mood.label;
+          <Text style={[styles.sectionTitle, { paddingHorizontal: 24 }]}>Overall Status</Text>
+          <View style={[styles.moodContainer, { paddingHorizontal: 24 }]}>
+            {MOODS.map(m => {
+              const isSelected = selectedMood.label === m.label;
               return (
                 <TouchableOpacity 
-                  key={mood.label}
+                  key={m.label}
                   style={[
-                    styles.moodCard,
-                    isActive ? { borderColor: mood.color, backgroundColor: mood.bg } : { borderColor: '#e2e8f0' }
+                    styles.moodBtn,
+                    { backgroundColor: m.bg },
+                    isSelected && { borderWidth: 2, borderColor: m.color }
                   ]}
-                  onPress={() => setSelectedMood(mood.label)}
+                  onPress={() => setSelectedMood(m)}
                 >
-                  <Feather name={mood.icon as any} size={24} color={isActive ? mood.color : '#94a3b8'} />
-                  <Text style={[
-                    styles.moodLabel,
-                    isActive ? { color: mood.color } : { color: '#64748b' }
-                  ]}>{mood.label}</Text>
+                  <Feather name={m.icon as any} size={24} color={m.color} />
+                  <Text style={[styles.moodText, { color: m.color }]}>{m.label}</Text>
                 </TouchableOpacity>
               );
             })}
           </View>
         </View>
 
-        {/* Note Entry */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Clinical Note</Text>
-          <View style={styles.inputWrap}>
-            <TextInput
-              style={styles.input}
-              placeholder="Record observations, treatments, and general status..."
-              placeholderTextColor="#94a3b8"
-              multiline
-              textAlignVertical="top"
-              value={note}
-              onChangeText={setNote}
-            />
+        {/* Note Input */}
+        <View style={[styles.section, { paddingHorizontal: 24, flex: 1 }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Care Notes</Text>
+            <View style={styles.micBadge}>
+              <Feather name="mic" size={14} color="#7c3aed" />
+              <Text style={styles.micText}>Tap mic on keyboard</Text>
+            </View>
           </View>
-        </View>
-
-        {/* Attachments */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Attachments</Text>
-          <TouchableOpacity style={styles.attachBox}>
-            <Feather name="camera" size={24} color="#7c3aed" />
-            <Text style={styles.attachText}>Add Photo or Document</Text>
-          </TouchableOpacity>
+          <TextInput
+            style={styles.textInput}
+            placeholder="Document vital signs, administered meds, behavior..."
+            placeholderTextColor="#94a3b8"
+            multiline
+            textAlignVertical="top"
+            value={note}
+            onChangeText={setNote}
+          />
         </View>
 
       </ScrollView>
+
+      {/* Footer */}
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+        <TouchableOpacity style={[styles.submitBtn, submitting && {opacity: 0.7}]} onPress={handleSave} disabled={submitting}>
+          {submitting ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Feather name="check" size={20} color="#fff" />
+              <Text style={styles.submitBtnText}>Save Note</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc', // Very subtle gray background for the form
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    zIndex: 10,
-  },
-  backBtn: {
-    padding: 8,
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  saveBtn: {
-    padding: 8,
-  },
-  saveBtnText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#7c3aed', // Clinical Violet
-  },
-  scrollContent: {
-    padding: 24,
-    paddingBottom: 100,
-  },
-  section: {
-    marginBottom: 32,
-  },
-  sectionLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#475569',
-    marginBottom: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  pill: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  pillActive: {
-    backgroundColor: '#7c3aed',
-    borderColor: '#7c3aed',
-  },
-  pillInactive: {
-    backgroundColor: '#ffffff',
-    borderColor: '#e2e8f0',
-  },
-  pillText: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  pillTextActive: {
-    color: '#ffffff',
-  },
-  pillTextInactive: {
-    color: '#64748b',
-  },
-  moodContainer: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  moodCard: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 16,
-    borderWidth: 2,
-    backgroundColor: '#ffffff',
-  },
-  moodLabel: {
-    marginTop: 8,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  inputWrap: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    overflow: 'hidden',
-  },
-  input: {
-    height: 150,
-    padding: 16,
-    fontSize: 16,
-    color: '#0f172a',
-    lineHeight: 24,
-  },
-  attachBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
-    backgroundColor: '#f5f3ff', // Light violet tint
-    borderRadius: 16,
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#ddd6fe',
-    gap: 12,
-  },
-  attachText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#6d28d9',
-  },
+  container: { flex: 1, backgroundColor: '#ffffff' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: '#f1f5f9' },
+  backBtn: { padding: 8 },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+  scrollContent: { paddingVertical: 24 },
+  section: { marginBottom: 32 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#0f172a', marginBottom: 16 },
+  pillContainer: { paddingRight: 24, gap: 8 },
+  pill: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 24, backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0' },
+  pillSelected: { backgroundColor: '#0f172a', borderColor: '#0f172a' },
+  pillText: { fontSize: 15, fontWeight: '600', color: '#64748b' },
+  pillTextSelected: { color: '#ffffff' },
+  moodContainer: { flexDirection: 'row', gap: 12 },
+  moodBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 16, borderRadius: 16, borderWidth: 2, borderColor: 'transparent' },
+  moodText: { fontSize: 14, fontWeight: '700' },
+  micBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#f5f3ff', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+  micText: { fontSize: 12, fontWeight: '600', color: '#7c3aed' },
+  textInput: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 16, padding: 16, height: 160, fontSize: 16, color: '#0f172a' },
+  footer: { paddingHorizontal: 24, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#f1f5f9', backgroundColor: '#ffffff' },
+  submitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#7c3aed', paddingVertical: 16, borderRadius: 16, gap: 8 },
+  submitBtnText: { fontSize: 16, fontWeight: '700', color: '#ffffff' }
 });
