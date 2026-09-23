@@ -13,6 +13,7 @@ import * as Google from 'expo-auth-session/providers/google';
 WebBrowser.maybeCompleteAuthSession();
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+type LoginMode = 'select' | 'family' | 'caregiver';
 
 const GEMINI_PALETTES = [
   ['rgba(167,243,252,0.8)', 'rgba(191,219,254,0.9)'],
@@ -23,7 +24,6 @@ function AuraFog() {
   const colorIndex = useRef(0);
   const fadeOut = useRef(new Animated.Value(1)).current;
   const fadeIn = useRef(new Animated.Value(0)).current;
-
   const [colors, setColors] = React.useState({
     current: GEMINI_PALETTES[0],
     next: GEMINI_PALETTES[1],
@@ -63,295 +63,312 @@ function AuraFog() {
   );
 }
 
+// Custom NumPad Component
+const NumPad = ({ onKeyPress, onBackspace }: { onKeyPress: (n: string) => void, onBackspace: () => void }) => {
+  const rows = [
+    ['1', '2', '3'],
+    ['4', '5', '6'],
+    ['7', '8', '9'],
+    ['', '0', 'delete']
+  ];
+
+  return (
+    <View style={styles.numpadContainer}>
+      {rows.map((row, i) => (
+        <View key={i} style={styles.numpadRow}>
+          {row.map((key) => {
+            if (key === '') return <View key="empty" style={styles.numKey} />;
+            if (key === 'delete') {
+              return (
+                <TouchableOpacity key={key} style={styles.numKey} onPress={onBackspace}>
+                  <Feather name="delete" size={24} color="#0f172a" />
+                </TouchableOpacity>
+              );
+            }
+            return (
+              <TouchableOpacity key={key} style={styles.numKey} onPress={() => onKeyPress(key)}>
+                <Text style={styles.numKeyText}>{key}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ))}
+    </View>
+  );
+};
+
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
-  const scaleAnim = useRef(new Animated.Value(1)).current;
   
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [mode, setMode] = useState<LoginMode>('select');
   const [loading, setLoading] = useState(false);
 
-  // Setup Google Auth Request targeting the Web Client ID
+  // Family State
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  
+  // Caregiver State
+  const [caregiverStep, setCaregiverStep] = useState<'id' | 'pin'>('id');
+  const [caregiverId, setCaregiverId] = useState('');
+  const [caregiverPin, setCaregiverPin] = useState('');
+
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     clientId: '141003468817-d83e9mkfruh0f8i2lghv7n8jmvfe427q.apps.googleusercontent.com',
   });
 
-  // Handle Google Auth Response
   useEffect(() => {
     if (response?.type === 'success') {
       const { id_token } = response.params;
-      
       if (id_token) {
         setLoading(true);
-        // Pass the Google ID token directly to Supabase - NO server redirect needed!
-        supabase.auth.signInWithIdToken({
-          provider: 'google',
-          token: id_token
-        }).then(({ error }) => {
-          if (error) Alert.alert('Google Login Error', error.message);
-          setLoading(false);
-        });
+        supabase.auth.signInWithIdToken({ provider: 'google', token: id_token })
+          .then(({ error }) => {
+            if (error) Alert.alert('Google Login Error', error.message);
+            setLoading(false);
+          });
       }
-    } else if (response?.type === 'error') {
-      Alert.alert('Google Auth Error', response.error?.message || 'Something went wrong');
     }
   }, [response]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        navigation.replace('RoleSelector');
-      }
+      if (session) navigation.replace('RoleSelector');
     });
     
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        navigation.replace('RoleSelector');
-      }
+      if (event === 'SIGNED_IN' && session) navigation.replace('RoleSelector');
     });
-    
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
+    return () => authListener.subscription.unsubscribe();
   }, []);
 
-  const handleEmailLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Error', 'Please enter both email and password.');
-      return;
-    }
+  // --- Handlers ---
 
+  const handleEmailLogin = async () => {
+    if (!email || !password) return Alert.alert('Error', 'Please enter both email and password.');
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) Alert.alert('Login Failed', error.message);
+    setLoading(false);
+  };
 
-    if (error) {
-      Alert.alert('Login Failed', error.message);
-      setLoading(false);
+  const handleNumKeyPress = async (key: string) => {
+    if (caregiverStep === 'id') {
+      if (caregiverId.length < 4) setCaregiverId(prev => prev + key);
+    } else {
+      if (caregiverPin.length < 4) {
+        const newPin = caregiverPin + key;
+        setCaregiverPin(newPin);
+        
+        // Auto-submit when PIN reaches 4 digits
+        if (newPin.length === 4) {
+          setLoading(true);
+          // Map to Supabase Auth: ID -> email, PIN -> password
+          const dummyEmail = `staff_${caregiverId}@aethon.local`;
+          const dummyPassword = `PIN-${newPin}`;
+          
+          const { error } = await supabase.auth.signInWithPassword({ email: dummyEmail, password: dummyPassword });
+          if (error) {
+            Alert.alert('Login Failed', 'Invalid ID or PIN. (For dev, create this user in Supabase first)');
+            setCaregiverPin(''); // Reset PIN on failure
+          }
+          setLoading(false);
+        }
+      }
     }
   };
 
-  const handleGoogleLogin = () => {
-    promptAsync();
+  const handleBackspace = () => {
+    if (caregiverStep === 'id') {
+      setCaregiverId(prev => prev.slice(0, -1));
+    } else {
+      if (caregiverPin.length > 0) setCaregiverPin(prev => prev.slice(0, -1));
+      else setCaregiverStep('id'); // Go back to ID step if PIN is empty
+    }
   };
 
-  const animatePress = (inPress: boolean) => {
-    Animated.spring(scaleAnim, { toValue: inPress ? 0.95 : 1, useNativeDriver: true, speed: 20 }).start();
-  };
+  // --- Renderers ---
+
+  const renderSelectMode = () => (
+    <View style={styles.formContainer}>
+      <Text style={styles.title}>Welcome</Text>
+      <Text style={styles.subtitle}>Who is using this device?</Text>
+      
+      <TouchableOpacity style={styles.roleCard} onPress={() => setMode('caregiver')}>
+        <View style={[styles.roleIconBox, { backgroundColor: '#eff6ff' }]}>
+          <Feather name="shield" size={28} color="#3b82f6" />
+        </View>
+        <View style={styles.roleTextWrap}>
+          <Text style={styles.roleTitle}>Care Professional</Text>
+          <Text style={styles.roleDesc}>Shift access via ID & PIN</Text>
+        </View>
+        <Feather name="chevron-right" size={20} color="#cbd5e1" />
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.roleCard} onPress={() => setMode('family')}>
+        <View style={[styles.roleIconBox, { backgroundColor: '#fdf2f8' }]}>
+          <Feather name="heart" size={28} color="#ec4899" />
+        </View>
+        <View style={styles.roleTextWrap}>
+          <Text style={styles.roleTitle}>Family Member</Text>
+          <Text style={styles.roleDesc}>Secure consumer login</Text>
+        </View>
+        <Feather name="chevron-right" size={20} color="#cbd5e1" />
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderCaregiverMode = () => (
+    <View style={styles.caregiverContainer}>
+      <TouchableOpacity style={styles.backBtn} onPress={() => { setMode('select'); setCaregiverId(''); setCaregiverPin(''); setCaregiverStep('id'); }}>
+        <Feather name="arrow-left" size={24} color="#0f172a" />
+      </TouchableOpacity>
+      
+      <Text style={styles.caregiverTitle}>
+        {caregiverStep === 'id' ? 'Enter Nurse ID' : 'Enter 4-Digit PIN'}
+      </Text>
+      <Text style={styles.caregiverSubtitle}>
+        {caregiverStep === 'id' ? 'Your 4-digit facility identifier' : `Logging in as ID: ${caregiverId}`}
+      </Text>
+
+      {/* Dots Display */}
+      <View style={styles.dotsContainer}>
+        {[0, 1, 2, 3].map(i => {
+          const val = caregiverStep === 'id' ? caregiverId[i] : caregiverPin[i];
+          const isFilled = !!val;
+          return (
+            <View key={i} style={[styles.dotBox, isFilled && styles.dotBoxFilled]}>
+              <Text style={[styles.dotText, isFilled && styles.dotTextFilled]}>
+                {caregiverStep === 'id' ? val : (isFilled ? '•' : '')}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      {caregiverStep === 'id' && (
+        <TouchableOpacity 
+          style={[styles.nextBtn, caregiverId.length === 4 ? styles.nextBtnActive : {}]}
+          disabled={caregiverId.length < 4}
+          onPress={() => setCaregiverStep('pin')}
+        >
+          <Text style={styles.nextBtnText}>Next</Text>
+        </TouchableOpacity>
+      )}
+
+      {loading && <Text style={{textAlign: 'center', marginTop: 10}}>Authenticating...</Text>}
+
+      <NumPad onKeyPress={handleNumKeyPress} onBackspace={handleBackspace} />
+    </View>
+  );
+
+  const renderFamilyMode = () => (
+    <View style={styles.formContainer}>
+      <TouchableOpacity style={styles.backBtnSmall} onPress={() => setMode('select')}>
+        <Feather name="arrow-left" size={20} color="#64748b" />
+        <Text style={styles.backBtnText}>Back</Text>
+      </TouchableOpacity>
+
+      <Text style={styles.titleSmall}>Family Portal</Text>
+
+      <TouchableOpacity style={styles.googleButton} onPress={() => promptAsync()} disabled={loading}>
+        <Image source={require('../../../assets/google-icon.png')} style={styles.googleIcon} />
+        <Text style={styles.googleButtonText}>Continue with Google</Text>
+      </TouchableOpacity>
+
+      <View style={styles.dividerWrap}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>OR EMAIL</Text>
+        <View style={styles.dividerLine} />
+      </View>
+
+      <View style={styles.inputWrap}>
+        <Feather name="mail" size={20} color="#94a3b8" />
+        <TextInput style={styles.input} placeholder="Email" placeholderTextColor="#94a3b8" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
+      </View>
+      <View style={styles.inputWrap}>
+        <Feather name="lock" size={20} color="#94a3b8" />
+        <TextInput style={styles.input} placeholder="Password" placeholderTextColor="#94a3b8" secureTextEntry value={password} onChangeText={setPassword} />
+      </View>
+
+      <TouchableOpacity style={[styles.loginBtn, loading && { opacity: 0.7 }]} onPress={handleEmailLogin} disabled={loading}>
+        <Text style={styles.loginBtnText}>{loading ? 'Signing In...' : 'Sign In'}</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <View style={styles.container}>
       <AuraFog />
-
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={[styles.content, { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 40 }]}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={[styles.content, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 20 }]}>
         
-        <View style={styles.header}>
-          <Image 
-            source={require('../../../assets/logo.jpg')}
-            style={styles.logoImage}
-            resizeMode="contain"
-          />
-          <Text style={styles.title}>Sign in to Aethon</Text>
-          <Text style={styles.subtitle}>Secure access for family and care teams</Text>
-        </View>
-
-        <View style={styles.formContainer}>
-          
-          <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-            <TouchableOpacity
-              activeOpacity={0.9}
-              onPressIn={() => animatePress(true)}
-              onPressOut={() => animatePress(false)}
-              onPress={handleGoogleLogin}
-              disabled={loading}
-            >
-              <View style={styles.googleButton}>
-                <Image 
-                  source={require('../../../assets/google-icon.png')} 
-                  style={styles.googleIcon} 
-                />
-                <Text style={styles.googleButtonText}>Continue with Google</Text>
-              </View>
-            </TouchableOpacity>
-          </Animated.View>
-
-          <View style={styles.dividerWrap}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
+        {mode === 'select' && (
+          <View style={styles.header}>
+            <Image source={require('../../../assets/logo.jpg')} style={styles.logoImage} resizeMode="contain" />
           </View>
+        )}
 
-          <View style={styles.inputWrap}>
-            <Feather name="mail" size={20} color="#94a3b8" />
-            <TextInput
-              style={styles.input}
-              placeholder="Email address"
-              placeholderTextColor="#94a3b8"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              value={email}
-              onChangeText={setEmail}
-            />
-          </View>
-          
-          <View style={styles.inputWrap}>
-            <Feather name="lock" size={20} color="#94a3b8" />
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              placeholderTextColor="#94a3b8"
-              secureTextEntry
-              value={password}
-              onChangeText={setPassword}
-            />
-          </View>
+        {mode === 'select' && renderSelectMode()}
+        {mode === 'caregiver' && renderCaregiverMode()}
+        {mode === 'family' && renderFamilyMode()}
 
-          <TouchableOpacity
-            style={[styles.loginBtn, loading && { opacity: 0.7 }]}
-            onPress={handleEmailLogin}
-            disabled={loading}
-          >
-            <Text style={styles.loginBtnText}>{loading ? 'Signing In...' : 'Sign In with Email'}</Text>
-          </TouchableOpacity>
-          
-          <Text style={styles.termsText}>
-            By continuing, you agree to our Terms of Service and Privacy Policy.
-          </Text>
-        </View>
       </KeyboardAvoidingView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  auraContainer: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-    right: 0,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 24,
-    justifyContent: 'space-between',
-  },
-  header: {
-    alignItems: 'center',
-    marginTop: '5%',
-  },
-  logoImage: {
-    width: 100,
-    height: 100,
-    marginBottom: 24,
-    borderRadius: 24,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#0f172a',
-    letterSpacing: -1,
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#64748b',
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  formContainer: {
-    width: '100%',
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    padding: 24,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.5)',
-    shadowColor: '#64748b',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 24,
-    marginBottom: 20,
-  },
-  googleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    width: '100%',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  googleIcon: {
-    width: 20,
-    height: 20,
-    marginRight: 12,
-  },
-  googleButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  dividerWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 24,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#e2e8f0',
-  },
-  dividerText: {
-    paddingHorizontal: 12,
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#94a3b8',
-  },
-  inputWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    marginBottom: 16,
-    height: 56,
-  },
-  input: {
-    flex: 1,
-    marginLeft: 12,
-    fontSize: 16,
-    color: '#0f172a',
-  },
-  loginBtn: {
-    backgroundColor: '#0f172a',
-    borderRadius: 12,
-    height: 56,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-  },
-  loginBtnText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  termsText: {
-    marginTop: 24,
-    fontSize: 13,
-    color: '#94a3b8',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
+  container: { flex: 1, backgroundColor: '#ffffff' },
+  auraContainer: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0 },
+  content: { flex: 1, paddingHorizontal: 24, justifyContent: 'center' },
+  header: { alignItems: 'center', marginBottom: 24 },
+  logoImage: { width: 80, height: 80, borderRadius: 20 },
+  
+  title: { fontSize: 32, fontWeight: '800', color: '#0f172a', letterSpacing: -1, marginBottom: 8 },
+  subtitle: { fontSize: 16, color: '#64748b', fontWeight: '500', marginBottom: 32 },
+  titleSmall: { fontSize: 24, fontWeight: '800', color: '#0f172a', marginBottom: 24, marginTop: 12 },
+  
+  formContainer: { backgroundColor: 'rgba(255,255,255,0.9)', padding: 24, borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
+  
+  // Select Mode
+  roleCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 16, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  roleIconBox: { width: 48, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 16 },
+  roleTextWrap: { flex: 1 },
+  roleTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  roleDesc: { fontSize: 13, color: '#64748b', marginTop: 2 },
+
+  // Caregiver Mode
+  caregiverContainer: { backgroundColor: 'rgba(255,255,255,0.95)', padding: 24, borderRadius: 32, alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0', marginTop: -40 },
+  backBtn: { alignSelf: 'flex-start', padding: 8, marginLeft: -8, marginBottom: 16 },
+  caregiverTitle: { fontSize: 24, fontWeight: '800', color: '#0f172a', marginBottom: 8 },
+  caregiverSubtitle: { fontSize: 14, color: '#64748b', marginBottom: 32 },
+  
+  dotsContainer: { flexDirection: 'row', justifyContent: 'center', gap: 16, marginBottom: 32 },
+  dotBox: { width: 56, height: 64, borderRadius: 16, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
+  dotBoxFilled: { backgroundColor: '#fff', borderColor: '#3b82f6', borderWidth: 2 },
+  dotText: { fontSize: 24, fontWeight: '700', color: '#cbd5e1' },
+  dotTextFilled: { color: '#0f172a' },
+  
+  nextBtn: { backgroundColor: '#e2e8f0', paddingVertical: 14, paddingHorizontal: 48, borderRadius: 24, marginBottom: 24 },
+  nextBtnActive: { backgroundColor: '#0f172a' },
+  nextBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  numpadContainer: { width: '100%', maxWidth: 300, gap: 16 },
+  numpadRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  numKey: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#f8fafc', alignItems: 'center', justifyContent: 'center' },
+  numKeyText: { fontSize: 28, fontWeight: '600', color: '#0f172a' },
+
+  // Family Mode
+  backBtnSmall: { flexDirection: 'row', alignItems: 'center' },
+  backBtnText: { marginLeft: 4, fontSize: 14, color: '#64748b', fontWeight: '600' },
+  googleButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', paddingVertical: 14, borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0' },
+  googleIcon: { width: 20, height: 20, marginRight: 12 },
+  googleButtonText: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  dividerWrap: { flexDirection: 'row', alignItems: 'center', marginVertical: 20 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#e2e8f0' },
+  dividerText: { paddingHorizontal: 12, fontSize: 12, fontWeight: '700', color: '#94a3b8' },
+  inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, paddingHorizontal: 16, marginBottom: 12, height: 50 },
+  input: { flex: 1, marginLeft: 12, fontSize: 15, color: '#0f172a' },
+  loginBtn: { backgroundColor: '#0f172a', borderRadius: 12, height: 50, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  loginBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });
