@@ -8,7 +8,7 @@ import type { RootStackParamList } from '../../navigation/RootNavigator';
 import { Feather } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
 import * as WebBrowser from 'expo-web-browser';
-import * as Linking from 'expo-linking';
+import * as Google from 'expo-auth-session/providers/google';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -63,25 +63,6 @@ function AuraFog() {
   );
 }
 
-// Helper: extract tokens from URL hash fragment
-function extractTokensFromUrl(url: string) {
-  // Supabase implicit flow returns tokens in the hash fragment: #access_token=xxx&refresh_token=xxx
-  const hashIndex = url.indexOf('#');
-  if (hashIndex === -1) return null;
-  
-  const hash = url.substring(hashIndex + 1);
-  const params: Record<string, string> = {};
-  hash.split('&').forEach(pair => {
-    const [key, value] = pair.split('=');
-    if (key && value) params[decodeURIComponent(key)] = decodeURIComponent(value);
-  });
-  
-  if (params.access_token && params.refresh_token) {
-    return { access_token: params.access_token, refresh_token: params.refresh_token };
-  }
-  return null;
-}
-
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
@@ -90,6 +71,32 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Setup Google Auth Request targeting the Web Client ID
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
+    clientId: '141003468817-d83e9mkfruh0f8i2lghv7n8jmvfe427q.apps.googleusercontent.com',
+  });
+
+  // Handle Google Auth Response
+  useEffect(() => {
+    if (response?.type === 'success') {
+      const { id_token } = response.params;
+      
+      if (id_token) {
+        setLoading(true);
+        // Pass the Google ID token directly to Supabase - NO server redirect needed!
+        supabase.auth.signInWithIdToken({
+          provider: 'google',
+          token: id_token
+        }).then(({ error }) => {
+          if (error) Alert.alert('Google Login Error', error.message);
+          setLoading(false);
+        });
+      }
+    } else if (response?.type === 'error') {
+      Alert.alert('Google Auth Error', response.error?.message || 'Something went wrong');
+    }
+  }, [response]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -124,50 +131,8 @@ export default function LoginScreen() {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    try {
-      setLoading(true);
-      
-      // Use expo-linking to create the redirect URL (works in Expo Go)
-      const redirectUri = Linking.createURL('auth/callback');
-      console.log('Redirect URI:', redirectUri);
-      
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: redirectUri,
-          skipBrowserRedirect: true,
-          queryParams: { prompt: 'select_account' },
-        }
-      });
-      
-      if (error) throw error;
-      
-      if (data?.url) {
-        // Open browser and wait for it to redirect back
-        const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
-        
-        if (result.type === 'success' && result.url) {
-          // Extract tokens from the URL hash fragment
-          const tokens = extractTokensFromUrl(result.url);
-          
-          if (tokens) {
-            // Set the session manually in Supabase
-            const { error: sessionError } = await supabase.auth.setSession({
-              access_token: tokens.access_token,
-              refresh_token: tokens.refresh_token,
-            });
-            
-            if (sessionError) throw sessionError;
-            // onAuthStateChange will handle navigation
-          }
-        }
-      }
-    } catch (error: any) {
-      Alert.alert('Google Login Error', error.message);
-    } finally {
-      setLoading(false);
-    }
+  const handleGoogleLogin = () => {
+    promptAsync();
   };
 
   const animatePress = (inPress: boolean) => {
