@@ -6,6 +6,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/RootNavigator';
 import { supabase } from '../../lib/supabase';
+import { useShift } from '../../context/ShiftContext';
 import type { Resident, Escalation } from '../../types/database';
 
 function Badge({ label, variant }: { label: string; variant: 'high' | 'medium' | 'low' }) {
@@ -26,6 +27,7 @@ function Badge({ label, variant }: { label: string; variant: 'high' | 'medium' |
 export default function CaregiverHomeScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { pinnedResidentIds } = useShift();
   
   const [residents, setResidents] = useState<Resident[]>([]);
   const [escalations, setEscalations] = useState<Escalation[]>([]);
@@ -33,10 +35,15 @@ export default function CaregiverHomeScreen() {
 
   const fetchData = async () => {
     try {
-      const [residentsRes, escalationsRes] = await Promise.all([
-        supabase.from('residents').select('*').limit(3),
-        supabase.from('escalations').select('*, residents(first_name, last_name, room_number)').eq('is_resolved', false).limit(3)
-      ]);
+      let residentsQuery = supabase.from('residents').select('*');
+      if (pinnedResidentIds.length > 0) residentsQuery = residentsQuery.in('id', pinnedResidentIds);
+      else residentsQuery = residentsQuery.limit(3);
+
+      let escalationsQuery = supabase.from('escalations').select('*, residents(first_name, last_name, room_number)').eq('is_resolved', false);
+      if (pinnedResidentIds.length > 0) escalationsQuery = escalationsQuery.in('resident_id', pinnedResidentIds);
+      else escalationsQuery = escalationsQuery.limit(3);
+
+      const [residentsRes, escalationsRes] = await Promise.all([residentsQuery, escalationsQuery]);
       
       if (residentsRes.data) setResidents(residentsRes.data as Resident[]);
       if (escalationsRes.data) setEscalations(escalationsRes.data as Escalation[]);
@@ -49,7 +56,7 @@ export default function CaregiverHomeScreen() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [pinnedResidentIds]);
 
   const handleResolve = async (id: string) => {
     // Optimistic UI update
