@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/RootNavigator';
 import { supabase } from '../../lib/supabase';
@@ -33,6 +33,13 @@ export default function CaregiverHomeScreen() {
   const [residents, setResidents] = useState<Resident[]>([]);
   const [escalations, setEscalations] = useState<Escalation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [pinnedResidentIds])
+  );
 
   const fetchData = async () => {
     try {
@@ -64,10 +71,6 @@ export default function CaregiverHomeScreen() {
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, [pinnedResidentIds]);
-
   const handleResolve = async (id: string) => {
     // Optimistic UI update
     setEscalations(prev => prev.filter(e => e.id !== id));
@@ -86,7 +89,21 @@ export default function CaregiverHomeScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 100 }} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={async () => {
+              setRefreshing(true);
+              await fetchData();
+              setRefreshing(false);
+            }}
+            tintColor="#7c3aed"
+          />
+        }
+      >
         
         {/* Header Section */}
         <View style={styles.header}>

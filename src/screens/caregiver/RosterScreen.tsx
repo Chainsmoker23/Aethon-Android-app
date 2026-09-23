@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../lib/supabase';
 import { useShift } from '../../context/ShiftContext';
 
@@ -20,10 +21,13 @@ export default function RosterScreen() {
   const [residents, setResidents] = useState<Resident[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    fetchResidents();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      fetchResidents();
+    }, [])
+  );
 
   const fetchResidents = async () => {
     try {
@@ -95,10 +99,24 @@ export default function RosterScreen() {
         />
       </View>
       
-      {loading ? (
+      {loading && !refreshing ? (
         <ActivityIndicator style={{ marginTop: 40 }} color="#0f172a" />
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent} 
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl 
+              refreshing={refreshing} 
+              onRefresh={async () => {
+                setRefreshing(true);
+                await fetchResidents();
+                setRefreshing(false);
+              }}
+              tintColor="#7c3aed"
+            />
+          }
+        >
           
           {pinnedResidents.length > 0 && (
             <>
