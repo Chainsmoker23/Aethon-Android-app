@@ -169,7 +169,7 @@ export default function LoginScreen() {
           
           const { error } = await supabase.auth.signInWithPassword({ email: dummyEmail, password: dummyPassword });
           if (error) {
-            Alert.alert('Login Failed', 'Invalid ID or PIN. (For dev, create this user in Supabase first)');
+            Alert.alert('Login Failed', error.message + `\n(Attempted: ${dummyEmail})`);
             setCaregiverPin(''); // Reset PIN on failure
           }
           setLoading(false);
