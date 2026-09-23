@@ -131,13 +131,35 @@ export default function LoginScreen() {
     }
   }, [response]);
 
+  const routeUserBasedOnRole = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('id', userId)
+        .single();
+        
+      if (data?.role === 'caregiver' || data?.role === 'staff' || data?.role === 'admin' || data?.role === 'superadmin') {
+        navigation.replace('CaregiverApp');
+      } else {
+        navigation.replace('FamilyApp');
+      }
+    } catch (err) {
+      console.error('Routing error', err);
+      // Fallback
+      navigation.replace('RoleSelector');
+    }
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) navigation.replace('RoleSelector');
+      if (session) routeUserBasedOnRole(session.user.id);
     });
     
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' && session) navigation.replace('RoleSelector');
+      if (event === 'SIGNED_IN' && session) {
+        routeUserBasedOnRole(session.user.id);
+      }
     });
     return () => authListener.subscription.unsubscribe();
   }, []);
