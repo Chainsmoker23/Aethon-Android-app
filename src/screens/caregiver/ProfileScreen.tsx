@@ -1,16 +1,19 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Switch, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/RootNavigator';
+import { supabase } from '../../lib/supabase';
+import { useShift } from '../../context/ShiftContext';
 
-function SettingsRow({ icon, label, value, type = 'link', onToggle, isToggled, isLast = false, destructive = false }: any) {
+function SettingsRow({ icon, label, value, type = 'link', onToggle, isToggled, isLast = false, destructive = false, onPress }: any) {
   return (
     <TouchableOpacity 
       style={[styles.row, !isLast && styles.rowBorder]}
       disabled={type === 'toggle'}
+      onPress={onPress}
     >
       <View style={styles.rowLeft}>
         <View style={[styles.iconWrap, destructive && { backgroundColor: '#fee2e2' }]}>
@@ -38,15 +41,22 @@ function SettingsRow({ icon, label, value, type = 'link', onToggle, isToggled, i
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { clearPins } = useShift();
 
   const [biometrics, setBiometrics] = useState(true);
   const [notifications, setNotifications] = useState(true);
 
-  const handleLogout = () => {
-    navigation.reset({
-      index: 0,
-      routes: [{ name: 'Login' }],
-    });
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+      clearPins(); // Ensure the next nurse doesn't inherit these pinned patients
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Login' }],
+      });
+    } catch (error: any) {
+      Alert.alert('Logout Error', error.message);
+    }
   };
 
   return (
