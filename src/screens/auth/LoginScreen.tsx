@@ -115,8 +115,14 @@ export default function LoginScreen() {
     try {
       setLoading(true);
       const redirectUri = makeRedirectUri({
-        scheme: 'aethon'
+        scheme: 'aethon',
+        path: 'auth/callback'
       });
+      
+      console.log('--------------------------------------------------');
+      console.log('REDIRECT URI (COPY EXACTLY):');
+      console.log(redirectUri);
+      console.log('--------------------------------------------------');
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
@@ -134,12 +140,16 @@ export default function LoginScreen() {
       if (data?.url) {
         const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUri);
         
-        if (result.type === 'success') {
-          // Parse the URL to get the session token
-          const { url } = result;
-          // Supabase handles the URL session extraction automatically if configured, 
-          // but we can force it if needed:
-          // await supabase.auth.getSessionFromUrl({ url });
+        if (result.type === 'success' && result.url) {
+          // Manually extract session since detectSessionInUrl is false in React Native
+          const { data: sessionData, error: sessionError } = await supabase.auth.getSessionFromUrl({
+            url: result.url
+          });
+          
+          if (sessionError) throw sessionError;
+          if (sessionData.session) {
+             navigation.replace('RoleSelector');
+          }
         }
       }
     } catch (error: any) {
