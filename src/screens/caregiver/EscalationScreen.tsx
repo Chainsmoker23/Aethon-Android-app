@@ -75,7 +75,8 @@ export default function EscalationScreen() {
       const { error } = await supabase.from('escalations').insert({
         resident_id: selectedResidentId,
         facility_id: profile?.facility_id,
-        reason: `${selectedPriority.toUpperCase()} Priority: ${selectedReason}${details ? ' - ' + details : ''}`,
+        severity: selectedPriority,
+        reason: `${selectedReason}${details ? ' - ' + details : ''}`,
         is_resolved: false
       });
 

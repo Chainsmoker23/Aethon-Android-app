@@ -58,15 +58,17 @@ export default function LogNoteScreen() {
       
       const { data: profile } = await supabase
         .from('user_profiles')
-        .select('facility_id')
+        .select('facility_id, full_name')
         .eq('id', userData.user?.id)
         .single();
 
       const { error } = await supabase.from('visit_notes').insert({
         resident_id: selectedResidentId,
         facility_id: profile?.facility_id,
+        carer_id: userData.user?.id,
+        carer_name: profile?.full_name || 'Caregiver',
         visit_type: 'Caregiver Log',
-        tasks_completed: `[Mood: ${selectedMood.label}] - ${note}`
+        notes: `[Mood: ${selectedMood.label}] - ${note}`
       });
 
       if (error) throw error;

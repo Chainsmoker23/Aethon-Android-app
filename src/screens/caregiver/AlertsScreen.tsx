@@ -63,7 +63,7 @@ export default function AlertsScreen() {
             alerts.map(alert => (
               <View key={alert.id} style={styles.alertCard}>
                 <View style={styles.alertHeader}>
-                  <Text style={styles.alertType}>ESCALATION</Text>
+                  <Text style={styles.alertType}>{alert.severity || 'HIGH'} Priority</Text>
                   <Text style={styles.alertTime}>
                     {new Date(alert.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </Text>
